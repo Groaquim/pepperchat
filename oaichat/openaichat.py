@@ -29,7 +29,10 @@ class OaiChat:
   def __init__(self,user,prompt=None):
     self.log = None
     self.reset(user,prompt)
-    self.client = OpenAI(api_key = os.getenv('OPENAI_KEY'))
+    self.client = OpenAI(
+        api_key=os.getenv('OPENAI_KEY'),
+        base_url="https://api.groq.com/openai/v1"
+    )
 
   def reset(self,user,prompt=None):
     self.user = user
@@ -60,7 +63,7 @@ class OaiChat:
     try:
       response = self.client.chat.completions.create(
         #model="gpt-3.5-turbo-1106",
-        model="gpt-4o-mini", 
+        model="qwen/qwen3.8-27b", 
         #response_format={ "type": "json_object" },
         #user=self.user,
         messages=self.history,
@@ -74,7 +77,7 @@ class OaiChat:
       print("Failed response attempt, trying fallback")
     if not response:
       response = self.client.chat.completions.create(
-        model="gpt-3.5-turbo-1106",
+        model="openai/gpt-oss-20b",
         messages=self.history,
         max_tokens=150,
       )

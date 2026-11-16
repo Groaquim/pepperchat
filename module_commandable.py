@@ -14,7 +14,7 @@
 ###########################################################
 
 ROBOT_PORT = 9559 # Robot
-ROBOT_IP = "pepper.local" # Pepper default
+ROBOT_IP = "10.93.51.219" # Pepper default
 
 from optparse import OptionParser
 import threading
@@ -127,7 +127,7 @@ class ModuleCommandable(naoqi.ALModule):
 
     def on_touch_changed(self, name, touches):
         touched = any([len(touch) > 1 and touch[1] == True for touch in touches])
-        self.state_reporter.report_head_touched(touched)
+        ser.report_hlf.state_reporteead_touched(touched)
         if touched:
             self.stop_talking()
 
