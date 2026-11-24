@@ -54,6 +54,8 @@ def main():
 
     def on_transcript(result: TranscriberResult):
         nonlocal is_bot_busy
+        if robot_state_listener.state.head_touched:
+            return
         if not result.is_final or not result.transcripts:
             return
         user_text = result.transcripts[0].transcript.strip()
@@ -93,13 +95,18 @@ def main():
     )
 
     def mic_callback(sample_rate, channel_cnt, frames):
-        nonlocal speech_start_time
-        # Coupe le micro pendant que Pepper réfléchit ou parle pour éviter qu'il ne s'écoute lui-même
-        if is_bot_busy or robot_state_listener.state.talking:
-            return
-        if not transcriber._buffer:
-            speech_start_time = time.time()
-        silero.push_pcm16_frames(sample_rate, channel_cnt, frames)
+      nonlocal speech_start_time
+      # Coupe le micro si PepperChat est arrêté sur la tablette (head_touched == True),
+      # ou pendant que Pepper réfléchit/parle
+      if (
+          robot_state_listener.state.head_touched
+          or is_bot_busy
+          or robot_state_listener.state.talking
+      ):
+        return
+      if not transcriber._buffer:
+        speech_start_time = time.time()
+      silero.push_pcm16_frames(sample_rate, channel_cnt, frames)
 
     pcm_utils.listen_on_local_mic(48000, [mic_callback], channel_cnt=1)
 
