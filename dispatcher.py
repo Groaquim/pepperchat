@@ -11,6 +11,8 @@ from oai_dialogue.speech_to_text.groq_transcriber import GroqTranscriber
 from oai_dialogue.speech_to_text.transcriber import TranscriberResult
 from oaichat.openaichat import OaiChat
 import oai_dialogue.comm as comm
+import socket
+import numpy as np
 
 dotenv.load_dotenv(os.getenv('DIALOGUE_ENV', 'dialogue.env'))
 
@@ -140,7 +142,24 @@ def main():
       speech_start_time = time.time()
     silero.push_pcm16_frames(sample_rate, channel_cnt, frames)
 
-  pcm_utils.listen_on_local_mic(48000, [mic_callback], channel_cnt=1)
+  def listen_on_pepper_mic(callbacks, port=50008):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", port))
+    print(f"[Audio] En écoute du micro de Pepper sur le port UDP {port}...")
+    first_packet = True
+    while True:
+      data, addr = sock.recvfrom(16384)
+      if first_packet:
+        print(
+            f"[Audio PC] Premier paquet reçu de {addr}, taille: {len(data)}"
+            " octets"
+        )
+        first_packet = False
+      frames = np.frombuffer(data, dtype=np.int16)
+      for cb in callbacks:
+        cb(16000, 1, frames)
+
+  listen_on_pepper_mic([mic_callback])
 
 
 if __name__ == '__main__':

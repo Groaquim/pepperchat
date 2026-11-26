@@ -2,10 +2,14 @@
 
 ROBOT_PORT = 9559  # Robot
 ROBOT_IP = "10.138.204.219"  # Pepper default
+PC_IP = "127.0.0.1"  # <-- À remplacer par l'IPv4 de ton PC sur le réseau local
+AUDIO_UDP_PORT = 50008
 
 import codecs
 from optparse import OptionParser
-import os, sys
+import os
+import socket
+import sys
 import threading
 import time
 import traceback
@@ -32,11 +36,11 @@ class ModuleCommandable(naoqi.ALModule):
     naoqi.ALModule.__init__(self, mod_name)
     self.memory = ALProxy("ALMemory", robot_ip, robot_port)
     self.posture = ALProxy("ALRobotPosture", robot_ip, robot_port)
-    self.autonomous_life = ALProxy("ALAutonomousLife")
+    self.autonomous_life = ALProxy("ALAutonomousLife", robot_ip, robot_port)
     self.tts = ALProxy("ALTextToSpeech", robot_ip, robot_port)
     self.aup = ALProxy("ALAnimatedSpeech", robot_ip, robot_port)
     self.tablet = ALProxy("ALTabletService", robot_ip, robot_port)
-    self.audio = ALProxy("ALAudioDevice")
+    self.audio = ALProxy("ALAudioDevice", robot_ip, robot_port)
     self.awareness = ALProxy("ALBasicAwareness", robot_ip, robot_port)
     self.bg_movement = ALProxy("ALBackgroundMovement", robot_ip, robot_port)
 
@@ -46,6 +50,11 @@ class ModuleCommandable(naoqi.ALModule):
     self.awareness.setStimulusDetectionEnabled("Sound", True)
     self.awareness.setEngagementMode("FullyEngaged")
     self.awareness.startAwareness()
+
+    # Configuration du flux audio du micro avant (canal 3, 16000 Hz, non-entrelacé)
+    self.audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    self.audio.setClientPreferences(self.getName(), 16000, 3, 0)
+    self.audio.subscribe(self.getName())
 
     self.state_reporter = RobotStateReporter()
     self.command_receiver = pepper_command.CommandReceiver(self.on_command)
@@ -88,9 +97,20 @@ class ModuleCommandable(naoqi.ALModule):
               print(
                   "[Choregraphe] État PepperChat :", self.pepperchat_active
               )
-              if not self.pepperchat_active:
+              if self.pepperchat_active:
+                # Limite les mouvements de tête pendant l'écoute micro
+                try:
+                  self.awareness.pauseAwareness()
+                except Exception:
+                  pass
+              else:
                 self.stop_talking()
+                try:
+                  self.awareness.resumeAwareness()
+                except Exception:
+                  pass
               last_state = self.pepperchat_active
+
             self.state_reporter.state.pepperchat_active = (
                 self.pepperchat_active
             )
@@ -115,6 +135,18 @@ class ModuleCommandable(naoqi.ALModule):
 
     start_thread(speech_loop)
 
+  def processRemote(
+    self, nbOfChannels, nbOfSamplesByChannel, timeStamp, inputBuffer
+  ):
+    if not hasattr(self, "_audio_debug_printed"):
+      print("[Audio Robot] Premier flux reçu depuis Pepper !")
+      self._audio_debug_printed = True
+    if self.pepperchat_active:
+      try:
+        self.audio_sock.sendto(bytes(inputBuffer), (PC_IP, AUDIO_UDP_PORT))
+      except Exception as e:
+        print("[Audio Robot] Erreur envoi UDP :", e)
+
   def on_pepperchat_toggled(self, key, value, message):
     """Déclenché instantanément quand on clique sur le bouton HTML de la tablette"""
     self.pepperchat_active = bool(value)
@@ -132,8 +164,6 @@ class ModuleCommandable(naoqi.ALModule):
           self.pending_speech = command.text
 
       elif isinstance(command, pepper_command.ConfigSpeech):
-        # DÉSACTIVÉ : On laisse Choregraphe gérer ALAutonomousLife et la posture
-        # pour ne pas couper l'activité tablette en cours !
         if (
             not self.speech_config
             or self.speech_config.language != command.language
@@ -149,8 +179,10 @@ class ModuleCommandable(naoqi.ALModule):
         self.tablet_wifi_config = command
 
       elif isinstance(command, pepper_command.OpenUrlOnTablet):
-        # DÉSACTIVÉ : On garde notre page html/index.html affichée par Choregraphe
-        print("[Info] OpenUrlOnTablet ignoré (géré par Choregraphe) :", command.url)
+        print(
+            "[Info] OpenUrlOnTablet ignoré (géré par Choregraphe) :",
+            command.url,
+        )
     except:
       traceback.print_exc()
 
@@ -165,8 +197,17 @@ class ModuleCommandable(naoqi.ALModule):
 
   def stop(self):
     try:
+      self.audio.unsubscribe(self.getName())
+    except Exception:
+      pass
+    try:
       self.memory.unsubscribeToEvent("TouchChanged", self.getName())
       self.memory.unsubscribeToEvent("ENSC/PepperChat/Active", self.getName())
+    except Exception:
+      pass
+    try:
+      self.awareness.stopAwareness()
+      self.bg_movement.setEnabled(False)
     except Exception:
       pass
     self.running = False
@@ -184,7 +225,7 @@ class ModuleCommandable(naoqi.ALModule):
 def main():
   parser = OptionParser()
   parser.add_option(
-      "--pip", help="Parent broker port. The IP address or your robot", dest="pip"
+      "--pip", help="Parent broker port. The IP address of your robot", dest="pip"
   )
   parser.add_option(
       "--pport",
