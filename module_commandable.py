@@ -37,6 +37,15 @@ class ModuleCommandable(naoqi.ALModule):
     self.aup = ALProxy("ALAnimatedSpeech", robot_ip, robot_port)
     self.tablet = ALProxy("ALTabletService", robot_ip, robot_port)
     self.audio = ALProxy("ALAudioDevice")
+    self.awareness = ALProxy("ALBasicAwareness", robot_ip, robot_port)
+    self.bg_movement = ALProxy("ALBackgroundMovement", robot_ip, robot_port)
+
+    # Active la respiration naturelle et le suivi du regard même sans Autonomous Life
+    self.bg_movement.setEnabled(True)
+    self.awareness.setStimulusDetectionEnabled("People", True)
+    self.awareness.setStimulusDetectionEnabled("Sound", True)
+    self.awareness.setEngagementMode("FullyEngaged")
+    self.awareness.startAwareness()
 
     self.state_reporter = RobotStateReporter()
     self.command_receiver = pepper_command.CommandReceiver(self.on_command)
@@ -63,42 +72,46 @@ class ModuleCommandable(naoqi.ALModule):
     self.speech_config = None
 
     def speech_loop():
-          last_state = None
-          while self.running:
-            try:
-              try:
-                val = self.memory.getData("ENSC/PepperChat/Active")
-                self.pepperchat_active = bool(val)
-              except Exception:
-                self.pepperchat_active = False
+      last_state = None
+      last_sync = 0
+      while self.running:
+        try:
+          try:
+            val = self.memory.getData("ENSC/PepperChat/Active")
+            self.pepperchat_active = bool(val)
+          except Exception:
+            self.pepperchat_active = False
 
-              if self.pepperchat_active != last_state:
-                print(
-                    "[Choregraphe] État PepperChat :", self.pepperchat_active
-                )
-                # Transmet l'état à dispatcher.py via ZeroMQ
-                self.state_reporter.report_head_touched(
-                    not self.pepperchat_active
-                )
-                if not self.pepperchat_active:
-                  self.stop_talking()
-                last_state = self.pepperchat_active
+          now = time.time()
+          if self.pepperchat_active != last_state or (now - last_sync > 1.0):
+            if self.pepperchat_active != last_state:
+              print(
+                  "[Choregraphe] État PepperChat :", self.pepperchat_active
+              )
+              if not self.pepperchat_active:
+                self.stop_talking()
+              last_state = self.pepperchat_active
+            self.state_reporter.state.pepperchat_active = (
+                self.pepperchat_active
+            )
+            self.state_reporter.report_cur_state()
+            last_sync = now
 
-              if self.pending_speech and self.pepperchat_active:
-                data = encode(self.pending_speech)
-                self.pending_speech = ""
-                self.state_reporter.report_talking(True)
-                if self.speech_config and self.speech_config.animated:
-                  self.aup.say(data)
-                else:
-                  self.tts.say(data)
-              elif self.pending_speech and not self.pepperchat_active:
-                self.pending_speech = ""
+          if self.pending_speech and self.pepperchat_active:
+            data = encode(self.pending_speech)
+            self.pending_speech = ""
+            self.state_reporter.report_talking(True)
+            if self.speech_config and self.speech_config.animated:
+              self.aup.say(data)
+            else:
+              self.tts.say(data)
+          elif self.pending_speech and not self.pepperchat_active:
+            self.pending_speech = ""
 
-              self.state_reporter.report_talking(False)
-            except:
-              traceback.print_exc()
-            time.sleep(0.05)
+          self.state_reporter.report_talking(False)
+        except:
+          traceback.print_exc()
+        time.sleep(0.05)
 
     start_thread(speech_loop)
 
